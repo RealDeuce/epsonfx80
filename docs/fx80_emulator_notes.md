@@ -114,6 +114,56 @@ The ROM exposes these character regions:
 
 `ESC 4` selects Italic; `ESC 5` selects Roman. Codes 160-254 print Italic glyphs directly on 8-bit systems. `ESC 6` makes 128-159 and 255 printable as glyphs; `ESC 7` returns them to control-code behavior. `ESC I 1` makes printable glyphs available at 0-31 except for active control-code slots; `ESC I 0` restores control-code behavior. Some low controls cannot be printed directly even under `ESC I 1`: 7-15, 17-20, 24, and 27. They can be reached through the international remapping path.
 
+### Italic glyph lookup
+
+The ROM does not shear Roman glyphs to make Italic. Italic is the high half of
+the same 256-entry 12-byte glyph table. The low half at `0x17A3..0x1DA2` is the
+Roman/control-alias half; the high half at `0x1DA3..0x23A2` is the
+Italic/high-character half.
+
+Use this lookup order for text bytes:
+
+1. Apply high-bit input mode outside raw graphics/data payloads: neutral
+   (`ESC #`), force high bit clear (`ESC =`), or force high bit set (`ESC >`).
+2. Decide whether the byte is printable. Low controls require `ESC I 1` and
+   still exclude active control slots; high controls `128..159` and `255`
+   require `ESC 6`; bytes `160..254` are printable high-half glyphs.
+3. Apply the international remap to the low seven bits of selected printable
+   positions. If the input byte originally had bit 7 set, preserve bit 7 in the
+   remapped internal code.
+4. If Italic mode from `ESC 4` is active, force bit 7 on in the internal glyph
+   code. `ESC 5` clears only this mode flag; it does not make already-high input
+   bytes Roman.
+5. Apply special glyph substitutions such as slashed zero.
+6. Use the final 8-bit internal glyph code to select a 12-byte ROM/RAM glyph
+   record. In proportional mode, use that selected record's prefix byte for the
+   start/end columns.
+
+Consequences:
+
+* `ESC 4` plus ASCII `A` selects glyph `0xC1`, the Italic `A` record.
+* Byte `0xC1` selects the Italic `A` record even when Roman mode is active,
+  assuming high-bit handling does not clear bit 7.
+* `ESC 5` followed by byte `0xC1` still prints Italic `A`; send ASCII `A`
+  (`0x41`) for Roman `A`.
+* International replacements have Roman and Italic forms. For example, a
+  remapped low-half glyph becomes the corresponding high-half glyph when the
+  input byte was high or `ESC 4` is active.
+* Italic proportional text uses the Italic record's prefix byte. Do not reuse
+  Roman proportional widths after forcing the high half.
+
+ROM nodes for this path:
+
+| Step | ROM evidence | Meaning |
+| --- | --- | --- |
+| `ESC 4` | Dispatch table `0x09FD`: command `0x34 -> 0x0AAC`; handler `0x0AAC` sets `$805B` bit `0x10` | Enables Italic mode. |
+| `ESC 5` | Dispatch table `0x09FD`: command `0x35 -> 0x0AB0`; handler `0x0AB0` clears `$805B` bit `0x10` | Disables Italic mode. |
+| Printable gate | `0x0BCF..0x0BFF`; `ESC I` toggles `$8003` bit `0x20` at `0x0BB9..0x0BC6`; `ESC 6/7` toggles `$8003` bit `0x40` at `0x0BC7..0x0BCE` | Determines whether low/high control-range bytes print as glyphs or act as controls. |
+| Text-output call sites | `0x073B..0x0741` and `0x0822..0x0828` | Normal text paths call international remap, Italic high-half forcing, then special glyph substitution before rendering. |
+| International remap | `0x0AC8..0x0AF6`, table `0x0AF7..0x0B7A`, active set `$804F` | Maps selected public positions through the active international set while preserving the input high bit. |
+| Italic high-half forcing | `0x0AB4..0x0ABD` | If `$805B` bit `0x10` is set, forces bit 7 on in `$8028`, the current internal glyph code. |
+| Glyph address | `0x176E..0x1788`; ROM table base `0x17A3`, high half `0x1DA3` | Multiplies the final internal glyph code by 12 and adds the active glyph table base. |
+
 ### ROM glyph table
 
 The 16 KiB local firmware dump contains the complete 256-entry glyph table.
@@ -134,7 +184,14 @@ Attribute byte format matches user-defined characters:
 | 6-4 | Proportional start column, 0-7 |
 | 3-0 | Proportional end column, 0-11 |
 
-For fixed-pitch output, print all 11 columns and apply the current pitch advance. For proportional output, print only the attribute-selected start/end span. Proportional mode is always emphasized.
+The proportional start/end fields are text-column indexes on a 120-column-per-inch
+grid. The ROM stores 11 data columns, but the end field can be 11; treat column
+11 as a trailing blank spacing column when it is selected.
+
+For fixed-pitch output, render the ROM data columns on the active pitch grid and
+apply the current pitch advance. For proportional output, print only the
+attribute-selected start/end span, including any selected trailing blank column.
+Proportional mode is always emphasized.
 
 `docs/fx80_rom_glyphs.csv` is generated from this ROM table. It includes all 256 rows with ROM offset, attribute decode, stored inverted bytes, and active column bytes.
 
@@ -194,6 +251,94 @@ When Italic is active, use the corresponding Italic internal location by adding 
 ## Text mode rendering
 
 The base character matrix is 9 rows high by 11 columns wide: 6 main columns plus 5 intermediate columns. Most ROM characters use 7 rows and leave the last two columns blank for inter-character spacing. Descenders use the lower rows. User-defined characters may be up to 8 dots tall and 11 columns wide.
+
+Fixed-pitch text renders into 12 horizontal slots per character cell. The ROM
+stores 11 data columns; the twelfth slot is spacing. Let `cell` be the active
+fixed-pitch character advance before Expanded is applied, and let
+`slot = cell / 12`. For a source dot in slot `u`, normal fixed-pitch output
+places one impression at:
+
+* `x + u * slot`
+
+Expanded mode doubles text width by duplicating each selected source slot, not
+by changing the glyph bitmap or dot size. For each source dot in slot `u`, place
+two impressions at:
+
+* `x + (2 * u) * slot`
+* `x + (2 * u + 1) * slot`
+
+Then double the character advance to `24 * slot`. The fixed-pitch slot sizes
+are:
+
+| Pitch | Normal slot | Expanded dot positions for source slot `u` | Expanded advance |
+| --- | --- | --- | --- |
+| Pica | `1/120 inch` | `(2u)/120`, `(2u+1)/120` inch from `x` | `24/120 inch` = 5 cpi |
+| Elite | `1/144 inch` | `(2u)/144`, `(2u+1)/144` inch from `x` | `24/144 inch` = 6 cpi |
+| Compressed | `1/(17.16 * 12) inch` | `(2u)/(17.16*12)`, `(2u+1)/(17.16*12)` inch from `x` | `24/(17.16*12) inch` = about 8.58 cpi |
+
+For proportional output, use the glyph prefix span instead of the 12-slot fixed
+cell. Clip to columns `start..end`, rebase the first selected column to `u=0`,
+and use `slot = 1/120 inch`. Normal proportional advance is
+`(end - start + 1) / 120 inch`; Expanded proportional advance is
+`2 * (end - start + 1) / 120 inch`. Blank selected columns, including trailing
+column 11, consume advance but place no dots.
+
+If an emphasized overstrike is also active, apply the emphasized horizontal
+overstrike to each expanded impression; do not use emphasized as a substitute
+for the expanded duplicate. That yields four print firings per original source
+dot before any same-position overlap is collapsed or visually blended by the
+renderer.
+
+### Double-strike rendering
+
+Double-strike is a second print pass, not a horizontal duplicate dot. `ESC G`
+sets the raw Double-Strike bit and `ESC H` clears it. `ESC ! n` also controls
+the raw Double-Strike bit through bit `0x10`.
+
+For each text dot in an effective Double-Strike passage, render:
+
+* the normal impression at the glyph dot position;
+* a second impression at the same horizontal position, vertically offset by
+  one-third of a 1/72-inch pin pitch, or `1/216 inch`, down the page.
+
+The manual describes the mechanism as printing the passage once, shifting the
+paper/head position slightly, and printing the passage again. The second pass
+applies to the text passage that is in Double-Strike until the line ends or
+Double-Strike is turned off. On FX-80, the mechanism can reverse-feed back to
+the original print line, so an emulator should not accumulate a permanent
+baseline drift after a Double-Strike segment. FX-100 cannot fully hide repeated
+mid-line Double-Strike/script transitions; that model-specific drift is not an
+FX-80 rendering requirement.
+
+This is the `1/216 inch` vertical unit used by `ESC 3`, `ESC J`, and `ESC j`,
+which the FX manuals identify as one-third of the distance between print-head
+pins. The ROM stores `ESC 3 n` spacing directly in this unit, while `ESC A n`
+multiplies the `n/72 inch` parameter by three before storing it. A true
+half-pin offset would be `1/144 inch`, or `1.5` of these internal units, so it
+is not representable by the FX-80 vertical-feed grid. Do not use a half-pin
+offset for FX-80 Double-Strike.
+
+Emphasized and Double-Strike are independent. Emphasized adds a horizontal
+overstrike; Double-Strike adds a vertically offset second pass. If both are
+effective, each source dot can produce four impressions: normal, emphasized
+horizontal overstrike, Double-Strike vertical pass, and emphasized overstrike on
+that vertical pass. Expanded duplication happens before these weight effects.
+
+Script modes force the Double-Strike/script pass even if raw Double-Strike was
+not already enabled. `ESC T` clears Script and returns to the previous raw
+Double-Strike state: if raw Double-Strike was on before Script, output remains
+Double-Strike; otherwise it returns to single-strike.
+
+ROM nodes for this path:
+
+| Step | ROM evidence | Meaning |
+| --- | --- | --- |
+| `ESC G` | Uppercase ESC table `0x09C7`: `G -> 0x3A79`; handler `0x3A79` sets raw `$8001` bit `0x10` and calls resolver `0x3AF0` | Enables raw Double-Strike. |
+| `ESC H` | Uppercase ESC table `0x09C7`: `H -> 0x3A7D`; handler `0x3A7D` clears raw `$8001` bit `0x10` and calls resolver `0x3AF0` | Disables raw Double-Strike. |
+| Master Select | `0x3A36..0x3A4E` masks `ESC ! n` with `0x3D`, stores it in `$8001`, and calls resolver `0x3AF0` | `ESC !` bit `0x10` is the Double-Strike selector. |
+| Script forcing | `0x3A9D..0x3AAD` sets raw `$8001` bit `0x80`; resolver `0x3B1C..0x3B23` maps Script to effective `$8000` bit `0x10` and `$8007` bits `0x18` | Script uses the Double-Strike/script pass regardless of raw Double-Strike. |
+| Raw Double-Strike resolver | `0x3B26..0x3B34` checks effective `$8000` bit `0x10`, then raw `$8001` bit `0x10`, and sets `$8007` bit `0x10` when raw Double-Strike is effective | Raw Double-Strike sets the second-pass flag when Script has not already claimed it. |
+| Vertical feed unit | `ESC 3` handler `0x0FB5..0x0FC9`; `ESC A` handler `0x0FBC..0x0FC9`; forward/reverse feed handlers `0x10C7` and `0x1126` | The stored vertical unit is `1/216 inch`; `ESC A n` multiplies by three, but `ESC 3 n`, `ESC J n`, and `ESC j n` use the unit directly. |
 
 Pitch and nominal line capacity:
 
