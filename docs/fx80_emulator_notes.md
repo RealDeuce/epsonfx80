@@ -252,29 +252,33 @@ When Italic is active, use the corresponding Italic internal location by adding 
 
 The base character matrix is 9 rows high by 11 columns wide: 6 main columns plus 5 intermediate columns. Most ROM characters use 7 rows and leave the last two columns blank for inter-character spacing. Descenders use the lower rows. User-defined characters may be up to 8 dots tall and 11 columns wide.
 
-Fixed-pitch text renders into 12 horizontal slots per character cell. The ROM
-stores 11 data columns; the twelfth slot is spacing. Let `cell` be the active
-fixed-pitch character advance before Expanded is applied, and let
-`slot = cell / 12`. For a source dot in slot `u`, normal fixed-pitch output
-places one impression at:
+Fixed-pitch text renders into 12 horizontal slots per character cell after the
+firmware's two interleaved column passes are combined. The ROM stores 11 data
+columns; the twelfth slot is spacing. Let `cell` be the active fixed-pitch
+character advance before Expanded is applied, and let `slot = cell / 12`. For a
+source dot in final combined slot `u`, normal fixed-pitch output places one
+impression at:
 
 * `x + u * slot`
 
-Expanded mode doubles text width by duplicating each selected source slot, not
-by changing the glyph bitmap or dot size. For each source dot in slot `u`, place
-two impressions at:
+Expanded mode doubles the final combined-column pitch, not the dot size or the
+glyph bitmap.
+For each source dot in slot `u`, place two impressions separated by the doubled
+pitch:
 
-* `x + (2 * u) * slot`
-* `x + (2 * u + 1) * slot`
+* `x + 2u * slot`
+* `x + (2u + 2) * slot`
 
-Then double the character advance to `24 * slot`. The fixed-pitch slot sizes
-are:
+Then double the character advance to `24 * slot`. Because the pitch doubles,
+blank intermediate columns also expand: a ROM glyph whose main columns carry
+dots at `u = 0, 2, 4, 6, 8` produces ten evenly spaced impressions across the
+doubled cell, not five clustered pairs. The fixed-pitch slot sizes are:
 
 | Pitch | Normal slot | Expanded dot positions for source slot `u` | Expanded advance |
 | --- | --- | --- | --- |
-| Pica | `1/120 inch` | `(2u)/120`, `(2u+1)/120` inch from `x` | `24/120 inch` = 5 cpi |
-| Elite | `1/144 inch` | `(2u)/144`, `(2u+1)/144` inch from `x` | `24/144 inch` = 6 cpi |
-| Compressed | `1/(17.16 * 12) inch` | `(2u)/(17.16*12)`, `(2u+1)/(17.16*12)` inch from `x` | `24/(17.16*12) inch` = about 8.58 cpi |
+| Pica | `1/120 inch` | `(2u)/120`, `(2u+2)/120` inch from `x` | `24/120 inch` = 5 cpi |
+| Elite | `1/144 inch` | `(2u)/144`, `(2u+2)/144` inch from `x` | `24/144 inch` = 6 cpi |
+| Compressed | `1/(17.16 * 12) inch` | `(2u)/(17.16*12)`, `(2u+2)/(17.16*12)` inch from `x` | `24/(17.16*12) inch` = about 8.58 cpi |
 
 For proportional output, use the glyph prefix span instead of the 12-slot fixed
 cell. Clip to columns `start..end`, rebase the first selected column to `u=0`,
@@ -283,11 +287,22 @@ and use `slot = 1/120 inch`. Normal proportional advance is
 `2 * (end - start + 1) / 120 inch`. Blank selected columns, including trailing
 column 11, consume advance but place no dots.
 
-If an emphasized overstrike is also active, apply the emphasized horizontal
-overstrike to each expanded impression; do not use emphasized as a substitute
-for the expanded duplicate. That yields four print firings per original source
-dot before any same-position overlap is collapsed or visually blended by the
-renderer.
+If an emphasized overstrike is also active, the emphasized `+1 slot` offset
+fills the gap between the two expanded impressions of each source dot. For a
+source dot at slot `u`, the four firings are at `2u`, `2u+1`, `2u+2`, and
+`2u+3` (in slot units). Emphasized expanded text therefore produces a solid run
+across the doubled cell width.
+
+ROM cross-check for Expanded:
+
+| Step | ROM evidence | Meaning |
+| --- | --- | --- |
+| One-line Expanded | Control dispatch `0x0970`: `SO -> 0x3A2B`; explicit ESC table `0x09FD`: `ESC SO -> 0x3A2B`; handler `0x3A2B` sets `$8007` bit `0x80` | Enables the one-line Expanded flag without touching glyph data. |
+| Continuous Expanded | Uppercase ESC table `0x09C7`: `W -> 0x3AC1`; handler `0x3AC1..0x3AD4` uses the on/off helper and sets/clears `$8000` bit `0x01` plus `$8007` bit `0x80` | `ESC W` controls the persistent Expanded flag; `DC4`/line end clear only the one-line side. |
+| Master Select Expanded | `ESC !` handler `0x3A36..0x3A4E` tests parameter bit `0x20`, calls the same set/clear helpers at `0x3AC7`/`0x3ACE`, then stores only `n & 0x3D` in raw mode byte `$8001` | Expanded is handled outside the raw pitch/weight resolver; it combines with the resolved pitch/weight mode. |
+| Character width | Width helper `0x24EC` calls base-width helper `0x24F5`, then tests `$8007` bit `0x80` and shifts the width left once when Expanded is active | Expanded doubles the character advance after pitch/proportional width is chosen. |
+| Interleaved column buffers | Text output at `0x04B9..0x04DB` advances `$800C` by signed stride `$802C`, then selects `$8082` or `$80A0` from the low bit of the resulting position | Adjacent final columns are split across two buffers/passes. A next word in one buffer is the next same-parity final column, two final slots away. |
+| Expanded/emphasized carry | After glyph columns are loaded, `0x0543..0x055E` tests the saved per-character flags and, when the carry pass is active, replaces each word with itself AND the previous word in the same selected buffer | The duplicate/carry is to the next same-parity buffer word. In final combined coordinates this lands at `u+2`, not adjacent final slot `u+1`; emphasized supplies the separate `+1` final-slot overstrike. |
 
 ### Double-strike rendering
 
@@ -322,7 +337,7 @@ Emphasized and Double-Strike are independent. Emphasized adds a horizontal
 overstrike; Double-Strike adds a vertically offset second pass. If both are
 effective, each source dot can produce four impressions: normal, emphasized
 horizontal overstrike, Double-Strike vertical pass, and emphasized overstrike on
-that vertical pass. Expanded duplication happens before these weight effects.
+that vertical pass. Expanded pitch doubling applies before these weight effects.
 
 Script modes force the Double-Strike/script pass even if raw Double-Strike was
 not already enabled. `ESC T` clears Script and returns to the previous raw
