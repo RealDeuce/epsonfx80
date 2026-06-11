@@ -1,5 +1,5 @@
 ; Epson FX-80 Version 2.00 main ROM mixed disassembly
-; Source: epson_8426k9_m1206ba029_read_as_27c128.bin
+; Source filename: epson_8426k9_m1206ba029_read_as_27c128.bin
 ; SHA256: 76f44e1c9fe34090a568b39a0fd995308d81bf5f1bf36f6fb6833eb1a2d51a17
 ; CPU: NEC uPD7810, disassembler: MAME unidasm
 ;

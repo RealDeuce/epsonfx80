@@ -1,10 +1,15 @@
 # Epson FX-80 emulator notes
 
-These notes summarize the local FX-80/FX-100 manuals, service document, and ROM dumps for emulator implementation. They are written so an implementer should not need to reopen the PDFs for command behavior.
+These notes summarize the tracked FX-80/FX-100 manuals and service document,
+plus locally supplied ROM dumps, for emulator implementation. They are written
+so an implementer should not need to reopen the PDFs for command behavior.
 
 The notes are FX-80 focused. FX-100 differences are included where the manuals give different line widths or paper width behavior.
 
 ## Source inventory
+
+The ROM dumps listed here are local-only analysis inputs and are intentionally
+ignored by git.
 
 | File | Use | SHA-256 |
 | --- | --- | --- |
@@ -111,7 +116,7 @@ The ROM exposes these character regions:
 
 ### ROM glyph table
 
-The 16 KiB firmware dump contains the complete 256-entry glyph table.
+The 16 KiB local firmware dump contains the complete 256-entry glyph table.
 
 * File: `epson_8426k9_m1206ba029_read_as_27c128.bin`
 * Table base: `0x17A3`

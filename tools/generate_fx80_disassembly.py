@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import sys
 import subprocess
 from pathlib import Path
 
@@ -80,6 +81,13 @@ def write_data(out, rom: bytes, start: int, end: int, description: str) -> None:
 
 
 def main() -> None:
+    if not ROM.exists():
+        sys.exit(
+            f"missing local ROM dump: {ROM}\n"
+            "Place a lawful local copy at that ignored path before regenerating "
+            f"{OUT.relative_to(ROOT)}."
+        )
+
     rom = ROM.read_bytes()
     digest = hashlib.sha256(rom).hexdigest()
 

@@ -1,7 +1,7 @@
 # Epson FX-80 ROM analysis
 
-This repository contains working reverse-engineering notes, ROM dumps, tools,
-and reference documents for the Epson FX-80 printer firmware.
+This repository contains working reverse-engineering notes, tools, and
+reference documents for the Epson FX-80 printer firmware.
 
 It exists to support FX-80 printer emulation in Dreamulator:
 
@@ -36,8 +36,10 @@ The FX-80 firmware ROM contains enough of the printer behavior to identify:
 - startup defaults, DIP switch sampling, and reset behavior;
 - the 8042-family slave controller ROM.
 
-Keeping the ROM dumps, documents, disassembly, scripts, and trace notes together
-makes the Dreamulator implementation reproducible.  When the emulator needs a
+Keeping the documents, disassembly, scripts, and trace notes together makes the
+Dreamulator implementation reproducible.  The original ROM dumps are not
+tracked in this public repository; keep any locally obtained dumps outside git
+or under the ignored filenames listed below.  When the emulator needs a
 behavioral detail, this repository should show whether that detail is already
 known, where it came from, and which ROM offsets are useful for confirming it.
 
@@ -49,8 +51,6 @@ known, where it came from, and which ROM offsets are useful for confirming it.
 | `docs/fx80_command_rom_audit.md` | Firmware-derived command dispatch inventory, decoded dispatch tables, ROM anchor addresses, and per-command verification status. |
 | `docs/fx80_rom_glyphs.csv` | Decoded resident glyph table data extracted from the firmware ROM. |
 | `docs/fx80_upd7810_disassembly.lst` | Disassembly listing of the main firmware ROM. |
-| `epson_8426k9_m1206ba029_read_as_27c128.bin` | 16 KiB main firmware ROM dump (Version 2.00).  Contains the command dispatcher, glyph table, graphics engine, and all resident printer logic. |
-| `epson_fx_c42040kb_8042ah.bin` | 2 KiB 8042-family slave controller ROM dump. |
 | `fx80__uv.pdf` | FX-80 tutorial volume (examples and behavioral explanations). |
 | `fx80__u1.pdf` | FX-80 reference volume (appendices A-K). |
 | `fx80__sl.pdf` | FX-80 one-page specification sheet. |
@@ -59,19 +59,20 @@ known, where it came from, and which ROM offsets are useful for confirming it.
 
 ## ROM summary
 
-The main firmware is `epson_8426k9_m1206ba029_read_as_27c128.bin`, a 16 KiB
-dump read as a 27C128-class device.  It contains a Version 2.00 identification
-string.
+The main firmware image used for this analysis was a 16 KiB dump read as a
+27C128-class device.  It contains a Version 2.00 identification string.
 
 The CPU is NEC uPD7810 family.  The disassembly listing was generated locally
-using:
+from a locally supplied dump using:
 
 ```sh
-tools/generate_fx80_disassembly.py
+python3 tools/generate_fx80_disassembly.py
 ```
 
-The companion `epson_fx_c42040kb_8042ah.bin` is a 2 KiB dump of the 8042-family
-slave controller used for interface/keyboard handling.
+For local regeneration, place the main firmware dump at the ignored path
+`epson_8426k9_m1206ba029_read_as_27c128.bin`.  The companion ignored path
+`epson_fx_c42040kb_8042ah.bin` is for the 2 KiB 8042-family slave controller
+dump used for interface/keyboard handling.
 
 ## Key ROM structures
 
@@ -95,8 +96,8 @@ precedence hierarchy documented in the FX-80 manuals.
 
 Use this repository as the evidence pack for the FX-80 implementation:
 
-1. Use `epson_8426k9_m1206ba029_read_as_27c128.bin` as the canonical firmware
-   image.
+1. Use a locally supplied Version 2.00 firmware dump as the canonical firmware
+   image when regenerating derived artifacts.
 2. Use `docs/fx80_rom_glyphs.csv` and the glyph table offsets to validate
    decoded glyph shapes.
 3. Use `docs/fx80_emulator_notes.md` for command behavior, hardware model,
